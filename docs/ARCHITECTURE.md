@@ -150,13 +150,7 @@ have different semantics and must not be treated as interchangeable:
 
 The official Grok client implements user-facing send-now by issuing the second
 prompt immediately; the Grok session actor owns queue insertion and
-cancellation as one operation. The bridge's current implementation instead
-sends `session/cancel`, stores one pending steer, waits for the old prompt to
-finish, and then sends another prompt. That fallback works at the Codex UI
-level but differs from Grok's native behavior: it can cancel subagents, records
-an explicit user cancellation, and cannot preserve more than one rapid steer.
-
-The intended mapping is:
+cancellation as one operation. The bridge implements the same mapping:
 
 1. Validate `threadId` and `expectedTurnId` against the active Codex turn.
 2. Send a new ACP prompt immediately with a unique prompt ID and
@@ -250,6 +244,7 @@ Bidirectional protocol translation engine:
   - `initialize` params mapping (ClientInfo <-> Implementation)
   - `thread/start` -> `session/new` (ThreadStartParams -> NewSessionRequest)
   - `turn/start` -> `session/prompt` (TurnStartParams + InputItem[] -> PromptRequest + ContentBlock[])
+  - `turn/steer` -> concurrent `session/prompt` with `_meta.sendNow: true`
   - `turn/interrupt` -> `session/cancel`
 - **acp_to_codex**: Translates ACP events to Codex notifications
   - `SessionUpdate::AgentMessageChunk` -> `item/agentMessage/delta`

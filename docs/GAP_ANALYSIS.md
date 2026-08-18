@@ -1,13 +1,13 @@
 # Protocol Gap Analysis
 
 > Audit of codex-acp-gateway coverage against both the Codex app-server
-> protocol and the Agent Client Protocol (ACP). Last updated: 2026-02-23.
+> protocol and the Agent Client Protocol (ACP). Last updated: 2026-08-18.
 
 ## Summary
 
 | Area | Implemented | Gap | Notes |
 |------|-------------|-----|-------|
-| Codex client requests (v2) | 28 of 36 | 8 | Account, remote skills, steer/review |
+| Codex client requests (v2) | 29 of 36 | 7 | Account, remote skills, review |
 | Codex server requests | 4 of 5 | 1 | Only token refresh remaining |
 | Codex server notifications | 20 of ~35 | ~15 | Account, config, terminal notifications |
 | ACP Agent trait (stable) | 8 of 8 | 0 | Full coverage |
@@ -22,7 +22,6 @@
 
 | Wire method | Priority | Notes |
 |---|---|---|
-| `turn/steer` | Medium | No ACP equivalent currently |
 | `review/start` | Low | Codex-specific feature |
 | `skills/remote/list` | Low | No ACP equivalent |
 | `skills/remote/export` | Low | No ACP equivalent |
@@ -147,4 +146,5 @@ actual capabilities or be configurable.
 
 ## 8. Recommended Next Steps
 
-1. **`turn/steer`** — Mid-turn steering; no ACP equivalent yet
+1. Keep XAI-specific steering fixtures pinned to the supported Grok Build
+   range as its ACP extension behavior evolves.

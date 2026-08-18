@@ -71,6 +71,20 @@ pub fn translate_turn_start(params: &Value, session_id: &str) -> PromptRequest {
     PromptRequest::new(session_id.to_string(), prompt)
 }
 
+/// Translate a Codex `turn/steer` request into Grok Build's send-now prompt.
+///
+/// `sendNow` is an XAI-specific ACP metadata extension. It asks Grok to replace
+/// the running foreground prompt without cancelling session-owned background
+/// work or queued prompts.
+pub fn translate_turn_steer(params: &Value, session_id: &str) -> PromptRequest {
+    let mut request = translate_turn_start(params, session_id);
+    request
+        .meta
+        .get_or_insert_default()
+        .insert("sendNow".to_string(), Value::Bool(true));
+    request
+}
+
 /// Translate a Codex `thread/resume` request into an ACP `LoadSessionRequest`.
 pub fn translate_thread_resume(
     params: &Value,
@@ -161,5 +175,22 @@ mod tests {
         assert!(!capabilities.fs.read_text_file);
         assert!(!capabilities.fs.write_text_file);
         assert!(!capabilities.terminal);
+    }
+
+    #[test]
+    fn steering_uses_grok_send_now_metadata() {
+        let request = translate_turn_steer(
+            &serde_json::json!({
+                "input": [{"type": "text", "text": "new direction"}]
+            }),
+            "session",
+        );
+
+        assert_eq!(request.session_id.0.as_ref(), "session");
+        assert_eq!(request.meta.as_ref().unwrap()["sendNow"], true);
+        assert_eq!(
+            serde_json::to_value(request).unwrap()["_meta"]["sendNow"],
+            true
+        );
     }
 }

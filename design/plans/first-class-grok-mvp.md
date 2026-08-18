@@ -1,6 +1,6 @@
 # First-class Grok MVP plan
 
-Status: MVP implemented; upstream steering alignment pending. The ACP
+Status: MVP and Grok Build send-now steering implemented. The ACP
 translation layer is adapted from the pinned Apache-2.0
 `codex-acp-gateway` implementation; this project owns the hybrid routing,
 model namespacing, persistence, version gate, and desktop launcher.
@@ -44,8 +44,7 @@ callbacks disabled so Grok retains its native command execution, permission,
 and process lifecycle; pin both disabled capabilities in the initialization
 fixture.
 
-Replace the bridge-owned steering sequence with Grok Build's native send-now
-path:
+Implemented Grok Build's native send-now path with these constraints:
 
 1. Translate `turn/steer` into another `session/prompt` for the active session
    with a unique prompt ID and `_meta.sendNow: true`; do not send

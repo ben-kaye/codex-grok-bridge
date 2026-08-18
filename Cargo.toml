@@ -71,6 +71,10 @@ description = "Run native Codex and Grok Build together in the Codex desktop UI"
 version = "1.0.0"
 edition = "2024"
 license = "Apache-2.0"
+rust-version = "1.89"
+repository = "https://github.com/ben-kaye/codex-grok-bridge"
+homepage = "https://github.com/ben-kaye/codex-grok-bridge"
+publish = false
 
 [lib]
 name = "codex_acp_gateway"

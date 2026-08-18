@@ -5,7 +5,7 @@ Run native OpenAI models and Grok 4.6 simultaneously from your Codex GUI.
 ## Install
 
 Requires macOS, `/Applications/ChatGPT.app`, authenticated Grok Build `1.0.x`,
-and Rust 1.85 or newer.
+and Rust 1.89 or newer.
 
 ```sh
 git clone https://github.com/ben-kaye/codex-grok-bridge.git
@@ -41,7 +41,13 @@ CLI `0.148.x` and Grok Build `1.0.x`; unsupported versions fail at startup.
 
 ```sh
 cargo test --locked
+./bin/smoke-test
 ```
+
+The smoke test requires the compatible Codex desktop bundle and an
+authenticated Grok Build installation. This application is distributed as a
+GitHub source release rather than a crates.io package because it builds against
+trimmed, repository-local Codex protocol crates.
 
 Grok-only routing state is stored under `$CODEX_HOME/grok-bridge/`; Grok
 history and the task/session mapping are stored under

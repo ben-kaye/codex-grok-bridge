@@ -39,6 +39,9 @@ use crate::transport::outgoing::OutgoingMessageSender;
 use crate::transport::stdio;
 use crate::transport::websocket;
 
+const BRIDGE_NAME: &str = "codex-grok-bridge";
+const BRIDGE_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 /// Internal events produced by background tasks (e.g. `spawn_local` prompt)
 /// and processed by the main event loop to update gateway state.
 enum InternalEvent {
@@ -46,6 +49,7 @@ enum InternalEvent {
     TurnCompleted {
         thread_id: String,
         turn_id: String,
+        prompt_id: String,
         outcome: PromptOutcome,
     },
 }
@@ -63,6 +67,7 @@ fn spawn_prompt(
     request: agent_client_protocol::PromptRequest,
     thread_id: String,
     turn_id: String,
+    prompt_id: String,
     internal_tx: mpsc::Sender<InternalEvent>,
 ) {
     tokio::task::spawn_local(async move {
@@ -77,6 +82,7 @@ fn spawn_prompt(
             .send(InternalEvent::TurnCompleted {
                 thread_id,
                 turn_id,
+                prompt_id,
                 outcome,
             })
             .await;
@@ -97,7 +103,7 @@ pub async fn run(config: GatewayConfig) -> Result<()> {
         agent_cmd = %config.agent_cmd,
         agent_args = ?config.agent_args,
         cwd = %cwd.display(),
-        "starting codex-acp-gateway"
+        "starting codex-grok-bridge"
     );
 
     let local = tokio::task::LocalSet::new();
@@ -232,13 +238,7 @@ async fn run_session(
 
             event = internal_rx.recv() => {
                 if let Some(internal_event) = event {
-                    handle_internal_event(
-                        internal_event,
-                        &agent,
-                        &internal_tx,
-                        &mut state,
-                        &outgoing,
-                    ).await;
+                    handle_internal_event(internal_event, &mut state, &outgoing).await;
                 }
             }
         }
@@ -311,7 +311,9 @@ async fn handle_codex_request(
             )
             .await
         }
-        "turn/steer" => handle_turn_steer(&params, agent.as_ref(), state, id_map).await,
+        "turn/steer" => {
+            handle_turn_steer(&params, Rc::clone(agent), state, id_map, internal_tx).await
+        }
         "turn/interrupt" => handle_turn_interrupt(&params, agent.as_ref(), state, id_map).await,
         "session/setMode" => handle_set_session_mode(&params, agent.as_ref(), state, id_map).await,
         "session/setConfigOption" => {
@@ -445,7 +447,7 @@ async fn handle_initialize(
         .unwrap_or("unknown");
 
     Ok(json!({
-        "userAgent": format!("codex-acp-gateway/0.1.0 (acp-agent/{agent_version})"),
+        "userAgent": format!("{BRIDGE_NAME}/{BRIDGE_VERSION} (acp-agent/{agent_version})"),
         "protocolVersion": protocol_version,
         "capabilities": {
             "experimental": {},
@@ -515,8 +517,8 @@ async fn handle_thread_start(
             forked_from_id: None,
             timestamp: now_str.clone(),
             cwd: cwd.to_path_buf(),
-            originator: "codex-acp-gateway".to_string(),
-            cli_version: "0.1.0".to_string(),
+            originator: BRIDGE_NAME.to_string(),
+            cli_version: BRIDGE_VERSION.to_string(),
             source: SessionSource::VSCode,
             agent_nickname: None,
             agent_role: None,
@@ -542,7 +544,7 @@ async fn handle_thread_start(
             "forkedFromId": null,
             "parentThreadId": null,
             "cwd": cwd.to_string_lossy(),
-            "cliVersion": "0.1.0",
+            "cliVersion": BRIDGE_VERSION,
             "createdAt": now_secs,
             "updatedAt": now_secs,
             "recencyAt": now_secs,
@@ -677,6 +679,10 @@ async fn handle_turn_start(
         }
     }
     let acp_req = codex_to_acp::translate_turn_start(params, &session_id);
+    let prompt_id = id_map::new_prompt_id();
+    state
+        .active_prompt_ids
+        .insert(turn_id.clone(), prompt_id.clone());
 
     // The prompt task reports completion back to the event loop, which owns
     // the accumulated deltas and emits authoritative completion items.
@@ -685,6 +691,7 @@ async fn handle_turn_start(
         acp_req,
         thread_id.to_string(),
         turn_id.clone(),
+        prompt_id,
         internal_tx.clone(),
     );
 
@@ -721,13 +728,33 @@ fn validate_turn_start_lifecycle(
     }
 }
 
-/// Adapt Codex steering to ACP's cancel-then-prompt control flow.
+/// Adapt Codex steering to Grok Build's concurrent send-now prompt flow.
 async fn handle_turn_steer(
     params: &Value,
-    agent: &(impl Agent + ?Sized),
+    agent: Rc<ClientSideConnection>,
     state: &mut GatewayState,
     id_map: &IdMap,
+    internal_tx: &mpsc::Sender<InternalEvent>,
 ) -> Result<Value, GatewayError> {
+    let (thread_id, active_turn_id, prompt_id, request) =
+        prepare_turn_steer(params, state, id_map)?;
+    spawn_prompt(
+        agent,
+        request,
+        thread_id,
+        active_turn_id.clone(),
+        prompt_id,
+        internal_tx.clone(),
+    );
+
+    Ok(json!({ "turnId": active_turn_id }))
+}
+
+fn prepare_turn_steer(
+    params: &Value,
+    state: &mut GatewayState,
+    id_map: &IdMap,
+) -> Result<(String, String, String, agent_client_protocol::PromptRequest), GatewayError> {
     let thread_id = params
         .get("threadId")
         .and_then(Value::as_str)
@@ -753,21 +780,25 @@ async fn handle_turn_steer(
             "expected active turn {expected_turn_id}, found {active_turn_id}"
         )));
     }
-    if id_map.lookup_session(thread_id).is_none() {
-        return Err(GatewayError::SessionNotFound {
-            thread_id: thread_id.into(),
-        });
+    let mapped_session_id =
+        id_map
+            .lookup_session(thread_id)
+            .ok_or_else(|| GatewayError::SessionNotFound {
+                thread_id: thread_id.into(),
+            })?;
+    if mapped_session_id != &session_id {
+        return Err(GatewayError::Translation(
+            "active turn session does not match the thread mapping".into(),
+        ));
     }
 
-    agent
-        .cancel(agent_client_protocol::CancelNotification::new(session_id))
-        .await
-        .map_err(|error| GatewayError::Acp(format!("steer cancellation failed: {error:?}")))?;
+    let request = codex_to_acp::translate_turn_steer(params, &session_id);
+    let prompt_id = id_map::new_prompt_id();
     state
-        .pending_steers
-        .insert(active_turn_id.clone(), params.clone());
+        .active_prompt_ids
+        .insert(active_turn_id.clone(), prompt_id.clone());
 
-    Ok(json!({ "turnId": active_turn_id }))
+    Ok((thread_id.to_string(), active_turn_id, prompt_id, request))
 }
 
 /// Handle `turn/interrupt` - cancel the active ACP prompt.
@@ -928,7 +959,7 @@ async fn handle_thread_resume(
         "thread": {
             "id": thread_id,
             "cwd": cwd.to_string_lossy(),
-            "cliVersion": "0.1.0",
+            "cliVersion": BRIDGE_VERSION,
             "createdAt": meta_created,
             "updatedAt": now_secs,
             "modelProvider": meta_provider,
@@ -1307,8 +1338,8 @@ async fn handle_thread_fork(
             forked_from_id: source_tid,
             timestamp: now_str.clone(),
             cwd: fork_cwd.clone(),
-            originator: "codex-acp-gateway".to_string(),
-            cli_version: "0.1.0".to_string(),
+            originator: BRIDGE_NAME.to_string(),
+            cli_version: BRIDGE_VERSION.to_string(),
             source: SessionSource::VSCode,
             agent_nickname: None,
             agent_role: None,
@@ -1390,7 +1421,7 @@ async fn handle_thread_fork(
         "thread": {
             "id": new_thread_id,
             "cwd": fork_cwd.to_string_lossy(),
-            "cliVersion": "0.1.0",
+            "cliVersion": BRIDGE_VERSION,
             "createdAt": created_secs,
             "updatedAt": created_secs,
             "modelProvider": model_provider,
@@ -1905,8 +1936,6 @@ fn active_turn_session(
 /// done and the session is ready for the next prompt.
 async fn handle_internal_event(
     event: InternalEvent,
-    agent: &Rc<ClientSideConnection>,
-    internal_tx: &mpsc::Sender<InternalEvent>,
     state: &mut GatewayState,
     outgoing: &OutgoingMessageSender,
 ) {
@@ -1914,6 +1943,7 @@ async fn handle_internal_event(
         InternalEvent::TurnCompleted {
             thread_id,
             turn_id,
+            prompt_id,
             outcome,
         } => {
             let succeeded = matches!(outcome, PromptOutcome::Completed { .. });
@@ -1923,6 +1953,16 @@ async fn handle_internal_event(
                 %succeeded,
                 "ACP prompt completed"
             );
+
+            if state.active_prompt_ids.get(&turn_id) != Some(&prompt_id) {
+                debug!(
+                    %thread_id,
+                    %turn_id,
+                    %prompt_id,
+                    "ignoring superseded ACP prompt completion"
+                );
+                return;
+            }
 
             // Extract the session_id from the current InTurn state.
             let session_id = match active_turn_session(state, &thread_id, &turn_id) {
@@ -1950,21 +1990,6 @@ async fn handle_internal_event(
                     }
                 },
             };
-
-            // ACP has no mid-prompt steer operation. Once cancellation of the
-            // old prompt is confirmed, send the queued steer input as another
-            // prompt while preserving the Codex turn and its streamed output.
-            if let Some(steer_params) = state.pending_steers.remove(&turn_id) {
-                let request = codex_to_acp::translate_turn_start(&steer_params, &session_id);
-                spawn_prompt(
-                    Rc::clone(agent),
-                    request,
-                    thread_id,
-                    turn_id,
-                    internal_tx.clone(),
-                );
-                return;
-            }
 
             let mut output = state
                 .turn_outputs
@@ -2043,6 +2068,7 @@ async fn handle_internal_event(
 
             // Clean up turn diffs for the completed turn.
             state.turn_diffs.remove(&turn_id);
+            state.active_prompt_ids.remove(&turn_id);
 
             // Transition lifecycle: InTurn → Idle.
             state.set_lifecycle(thread_id.clone(), SessionLifecycle::Idle { session_id });
@@ -2379,11 +2405,8 @@ mod tests {
         }
     }
 
-    #[tokio::test(flavor = "current_thread")]
-    async fn steer_cancels_active_prompt_and_queues_follow_up_input() {
-        let agent = CancelRecordingAgent {
-            cancelled_sessions: RefCell::new(Vec::new()),
-        };
+    #[test]
+    fn steer_prepares_unique_send_now_prompts_without_a_pending_queue() {
         let mut state = GatewayState::new();
         state.set_lifecycle(
             "thread".into(),
@@ -2400,13 +2423,17 @@ mod tests {
             "input": [{"type": "text", "text": "new direction", "textElements": []}],
         });
 
-        let response = handle_turn_steer(&params, &agent, &mut state, &ids)
-            .await
-            .unwrap();
+        let (thread_id, turn_id, first_prompt_id, first_request) =
+            prepare_turn_steer(&params, &mut state, &ids).unwrap();
+        let (_, _, second_prompt_id, second_request) =
+            prepare_turn_steer(&params, &mut state, &ids).unwrap();
 
-        assert_eq!(response["turnId"], "turn");
-        assert_eq!(agent.cancelled_sessions.borrow().as_slice(), ["session"]);
-        assert_eq!(state.pending_steers.get("turn"), Some(&params));
+        assert_eq!(thread_id, "thread");
+        assert_eq!(turn_id, "turn");
+        assert_ne!(first_prompt_id, second_prompt_id);
+        assert_eq!(first_request.meta.as_ref().unwrap()["sendNow"], true);
+        assert_eq!(second_request.meta.as_ref().unwrap()["sendNow"], true);
+        assert_eq!(state.active_prompt_ids.get("turn"), Some(&second_prompt_id));
         assert!(matches!(
             state.lifecycle("thread"),
             SessionLifecycle::InTurn { turn_id, .. } if turn_id == "turn"
@@ -2431,6 +2458,56 @@ mod tests {
             Some("session")
         );
         assert_eq!(active_turn_session(&state, "thread", "stale-turn"), None);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn superseded_prompt_completion_cannot_end_the_codex_turn() {
+        let mut state = GatewayState::new();
+        state.set_lifecycle(
+            "thread".into(),
+            SessionLifecycle::InTurn {
+                session_id: "session".into(),
+                turn_id: "turn".into(),
+            },
+        );
+        state.turn_outputs.insert(
+            "turn".into(),
+            crate::translation::state::TurnOutput::new(1_000),
+        );
+        state
+            .active_prompt_ids
+            .insert("turn".into(), "new-prompt".into());
+        let (outbound_tx, mut outbound_rx) = mpsc::channel(8);
+        let outgoing = OutgoingMessageSender::new(outbound_tx);
+
+        handle_internal_event(
+            InternalEvent::TurnCompleted {
+                thread_id: "thread".into(),
+                turn_id: "turn".into(),
+                prompt_id: "old-prompt".into(),
+                outcome: PromptOutcome::Completed {
+                    stop_reason: "Cancelled".into(),
+                    usage: None,
+                },
+            },
+            &mut state,
+            &outgoing,
+        )
+        .await;
+
+        assert!(matches!(
+            state.lifecycle("thread"),
+            SessionLifecycle::InTurn { turn_id, .. } if turn_id == "turn"
+        ));
+        assert!(state.turn_outputs.contains_key("turn"));
+        assert_eq!(
+            state.active_prompt_ids.get("turn").map(String::as_str),
+            Some("new-prompt")
+        );
+        assert!(matches!(
+            outbound_rx.try_recv(),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+        ));
     }
 
     #[tokio::test(flavor = "current_thread")]
