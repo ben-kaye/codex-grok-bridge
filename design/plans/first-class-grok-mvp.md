@@ -39,7 +39,10 @@ Grok edit updates into native file-change items by reading its namespaced
 initial tool kind, treating stable ACP updates as authoritative, replacing
 repeated content collections, and preserving separate replacement hunks. ACP
 filesystem callbacks remain disabled until they can provide the same approval
-and item lifecycle without introducing a second writer.
+and item lifecycle without introducing a second writer. Keep ACP terminal
+callbacks disabled so Grok retains its native command execution, permission,
+and process lifecycle; pin both disabled capabilities in the initialization
+fixture.
 
 Replace the bridge-owned steering sequence with Grok Build's native send-now
 path:

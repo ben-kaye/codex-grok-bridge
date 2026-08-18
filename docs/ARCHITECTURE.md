@@ -43,7 +43,7 @@ ACP (Agent Client Protocol) agents. It operates in two modes:
 | **Approval flow**     | Server requests (item/*/requestApproval)     | Client request (session/requestPermission) |
 | **Cancellation**      | Client request (turn/interrupt) with response| Client notification (session/cancel)       |
 | **File operations**   | Handled by codex-core internally             | Native agent tools or optional client callbacks |
-| **Terminal ops**      | Handled by codex-core internally             | Client callbacks (terminal/* family)       |
+| **Terminal ops**      | Handled by codex-core internally             | Native Grok tools; client callbacks disabled |
 | **Request IDs**       | String or Integer, independent space         | Integer, independent space                 |
 
 ## Data flow
@@ -65,9 +65,9 @@ ACP (Agent Client Protocol) agents. It operates in two modes:
   |  Layer  |<------|   +------------------+   |   | Manager |
   |         | write |            |             |   |         |
   +---------+       |   +--------v---------+   |   +---------+
-       ^            |   | Local Handlers   |   |        ^
-       |            |   | - fs read/write  |   |        |
-       |            |   | - terminal mgmt  |   |        |
+       ^            |   | ACP Client       |   |        ^
+       |            |   | - permissions    |   |        |
+       |            |   | - session updates|   |        |
        |            |   +------------------+   |        |
        |            |                          |        |
        |            +--------------------------+        |
@@ -181,30 +181,14 @@ references:
 - [Grok prompt queue decision](https://github.com/xai-org/grok-build/blob/d71f6e0c1f5acc5469e503e192fe14824e6f8c90/crates/codegen/xai-grok-shell/src/session/acp_session_impl/prompt_queue.rs)
 - [Grok send-now cancellation](https://github.com/xai-org/grok-build/blob/d71f6e0c1f5acc5469e503e192fe14824e6f8c90/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tasks_cancel.rs)
 
-### Optional ACP callbacks
+### ACP side-effect ownership
 
-The handler implementations exist for protocol completeness, but the Grok MVP
-does not advertise filesystem callbacks. Grok Build owns edits through its
-native tools and reports them as `session/update` tool diffs; this avoids a
-second write path that would bypass the Codex file-change lifecycle.
-
-```
-                               Gateway                    ACP Agent
-                                  |                          |
-                                  |<- fs/readTextFile -------|
-                                  |   ReadTextFileRequest    |
-            (read from disk) ---->|                          |
-                                  |-- fs/readTextFile resp ->|
-                                  |                          |
-                                  |<- terminal/create -------|
-                                  |   CreateTerminalRequest  |
-          (spawn subprocess) ---->|                          |
-                                  |-- terminal/create resp ->|
-                                  |                          |
-                                  |<- terminal/output -------|
-                                  |   (capture output)       |
-                                  |-- terminal/output resp ->|
-```
+The Grok MVP advertises neither filesystem nor terminal callbacks. Grok Build
+owns edits and command execution through its native tools, then reports their
+effects through `session/update` tool updates. This keeps approval, process
+lifecycle, and each side effect in one runtime. The bridge's client
+implementation handles only permissions, session updates, and supported
+extension methods.
 
 ## Module responsibilities
 
@@ -237,8 +221,8 @@ translation — just framing conversion (WebSocket Text frames <-> newline-delim
 JSON lines).
 
 ### `src/command_exec.rs`
-Sandbox-aware subprocess execution for ACP terminal callbacks. Wraps commands
-through the sandbox policy before spawning.
+Sandbox-aware subprocess execution for Codex `command/exec` requests. Wraps
+commands through the sandbox policy before spawning.
 
 ### `src/sandbox.rs`
 Bubblewrap (`bwrap`) sandbox integration. Provides `wrap_command()` which
@@ -259,7 +243,6 @@ ACP subprocess management and Client trait implementation:
   - `session_notification` -> translates and forwards to Codex as item/* notifications
 - **fs_handler**: dormant `fs/read_text_file` and `fs/write_text_file`
   implementations; filesystem capabilities are not advertised to Grok in the MVP
-- **terminal_handler**: `terminal/*` -> manages subprocesses locally via tokio::process
 
 ### `src/translation/`
 Bidirectional protocol translation engine:
@@ -337,11 +320,6 @@ Client trait (methods the client/gateway implements)
   |-- session_notification(SessionNotification)      [session/update]
   |-- read_text_file(ReadTextFileRequest) -> ReadTextFileResponse
   |-- write_text_file(WriteTextFileRequest) -> WriteTextFileResponse
-  |-- create_terminal(CreateTerminalRequest) -> CreateTerminalResponse
-  |-- terminal_output(TerminalOutputRequest) -> TerminalOutputResponse
-  |-- release_terminal(ReleaseTerminalRequest) -> ReleaseTerminalResponse
-  |-- wait_for_terminal_exit(...) -> WaitForTerminalExitResponse
-  |-- kill_terminal_command(...) -> KillTerminalCommandResponse
 
 SessionUpdate (notification variants)
   |-- UserMessageChunk
@@ -371,7 +349,6 @@ tokio::task::LocalSet (run_until)
   |-- run_session (directly awaited)
         |-- ACP Connection (spawn_local tasks)
         |-- Translation Event Loop (select! on both channels)
-        |-- Local Handler Tasks (fs, terminal)
 ```
 
 ### WebSocket mode
@@ -391,7 +368,6 @@ tokio::task::LocalSet (run_until)
           |-- [spawn_local] run_session
                 |-- ACP Connection (spawn_local tasks, own subprocess)
                 |-- Translation Event Loop (select! on both channels)
-                |-- Local Handler Tasks (fs, terminal)
 ```
 
 ## Translation state machine

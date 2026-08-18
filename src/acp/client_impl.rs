@@ -1,17 +1,10 @@
-use std::rc::Rc;
-
 use agent_client_protocol::{
-    Client, CreateTerminalRequest, CreateTerminalResponse, ExtNotification, ExtRequest,
-    ExtResponse, KillTerminalCommandRequest, KillTerminalCommandResponse, ReadTextFileRequest,
-    ReadTextFileResponse, ReleaseTerminalRequest, ReleaseTerminalResponse,
+    Client, ExtNotification, ExtRequest, ExtResponse, ReadTextFileRequest, ReadTextFileResponse,
     RequestPermissionRequest, RequestPermissionResponse, Result as AcpResult, SessionNotification,
-    TerminalOutputRequest, TerminalOutputResponse, WaitForTerminalExitRequest,
-    WaitForTerminalExitResponse, WriteTextFileRequest, WriteTextFileResponse,
+    WriteTextFileRequest, WriteTextFileResponse,
 };
-use tokio::sync::Mutex;
 
 use super::fs_handler;
-use super::terminal_handler::TerminalManager;
 
 /// Events that our ACP client implementation forwards to the gateway's
 /// translation / orchestration layer.
@@ -45,9 +38,6 @@ pub enum AcpEvent {
 pub struct GatewayAcpClient {
     /// Channel for forwarding events to the gateway event loop.
     event_tx: tokio::sync::mpsc::UnboundedSender<AcpEvent>,
-    /// Terminal process manager -- behind a tokio Mutex so we can hold the
-    /// guard across `.await` points within the `Client` trait methods.
-    terminal_manager: Rc<Mutex<TerminalManager>>,
 }
 
 impl std::fmt::Debug for GatewayAcpClient {
@@ -58,10 +48,7 @@ impl std::fmt::Debug for GatewayAcpClient {
 
 impl GatewayAcpClient {
     pub fn new(event_tx: tokio::sync::mpsc::UnboundedSender<AcpEvent>) -> Self {
-        Self {
-            event_tx,
-            terminal_manager: Rc::new(Mutex::new(TerminalManager::new())),
-        }
+        Self { event_tx }
     }
 }
 
@@ -115,90 +102,6 @@ impl Client for GatewayAcpClient {
             .await
             .map_err(internal_err)?;
         Ok(WriteTextFileResponse::new())
-    }
-
-    async fn create_terminal(
-        &self,
-        args: CreateTerminalRequest,
-    ) -> AcpResult<CreateTerminalResponse> {
-        tracing::debug!(command = %args.command, "agent creating terminal");
-        let env: Vec<(String, String)> = args
-            .env
-            .iter()
-            .map(|e| (e.name.clone(), e.value.clone()))
-            .collect();
-        let terminal_id = self
-            .terminal_manager
-            .lock()
-            .await
-            .create(
-                &args.command,
-                &args.args,
-                args.cwd.as_ref(),
-                &env,
-                args.output_byte_limit,
-            )
-            .await
-            .map_err(internal_err)?;
-        Ok(CreateTerminalResponse::new(terminal_id))
-    }
-
-    async fn terminal_output(
-        &self,
-        args: TerminalOutputRequest,
-    ) -> AcpResult<TerminalOutputResponse> {
-        let (output, truncated, exit_status) = self
-            .terminal_manager
-            .lock()
-            .await
-            .output(&args.terminal_id.0)
-            .await
-            .map_err(internal_err)?;
-        let mut resp = TerminalOutputResponse::new(output, truncated);
-        if let Some(status) = exit_status {
-            resp = resp.exit_status(status);
-        }
-        Ok(resp)
-    }
-
-    async fn wait_for_terminal_exit(
-        &self,
-        args: WaitForTerminalExitRequest,
-    ) -> AcpResult<WaitForTerminalExitResponse> {
-        let status = self
-            .terminal_manager
-            .lock()
-            .await
-            .wait_for_exit(&args.terminal_id.0)
-            .await
-            .map_err(internal_err)?;
-        Ok(WaitForTerminalExitResponse::new(status))
-    }
-
-    async fn kill_terminal_command(
-        &self,
-        args: KillTerminalCommandRequest,
-    ) -> AcpResult<KillTerminalCommandResponse> {
-        self.terminal_manager
-            .lock()
-            .await
-            .kill(&args.terminal_id.0)
-            .await
-            .map_err(internal_err)?;
-        Ok(KillTerminalCommandResponse::new())
-    }
-
-    async fn release_terminal(
-        &self,
-        args: ReleaseTerminalRequest,
-    ) -> AcpResult<ReleaseTerminalResponse> {
-        self.terminal_manager
-            .lock()
-            .await
-            .release(&args.terminal_id.0)
-            .await
-            .map_err(internal_err)?;
-        Ok(ReleaseTerminalResponse::new())
     }
 
     async fn ext_method(&self, args: ExtRequest) -> AcpResult<ExtResponse> {

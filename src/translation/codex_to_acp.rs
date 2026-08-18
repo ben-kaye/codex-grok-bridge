@@ -12,8 +12,8 @@ use super::content::codex_input_to_acp;
 /// Translate a Codex `initialize` request (as JSON params) into an ACP `InitializeRequest`.
 ///
 /// The Codex initialize carries `clientInfo { name, version }` and capabilities.
-/// We map these to the ACP equivalent. Terminal callbacks are advertised;
-/// filesystem callbacks remain disabled so Grok is the only file writer.
+/// We map these to the ACP equivalent. Filesystem and terminal callbacks remain
+/// disabled so Grok owns its native file and command side effects.
 pub fn translate_initialize(params: &Value) -> InitializeRequest {
     let mut req = InitializeRequest::new(ProtocolVersion::LATEST);
 
@@ -29,16 +29,15 @@ pub fn translate_initialize(params: &Value) -> InitializeRequest {
         req = req.client_info(agent_client_protocol::Implementation::new(name, version));
     }
 
-    // Grok Build owns its native file-edit side effects and projects them as
-    // ACP tool updates. Do not invite a second write path through client
-    // filesystem callbacks until those callbacks have the same approval and
-    // Codex item lifecycle as native Grok edits.
+    // Grok Build owns its native file and command side effects and projects
+    // them as ACP tool updates. Client callbacks would move execution into the
+    // bridge without adding a Codex-visible lifecycle.
     req = req.client_capabilities(
         ClientCapabilities::new()
             .fs(FileSystemCapability::new()
                 .read_text_file(false)
                 .write_text_file(false))
-            .terminal(true),
+            .terminal(false),
     );
 
     req
@@ -154,12 +153,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn initialization_keeps_grok_as_the_only_file_writer() {
+    fn initialization_keeps_file_and_terminal_execution_in_grok() {
         let request = translate_initialize(&serde_json::json!({
             "clientInfo": { "name": "codex", "version": "0.148.0" }
         }));
         let capabilities = request.client_capabilities;
         assert!(!capabilities.fs.read_text_file);
         assert!(!capabilities.fs.write_text_file);
+        assert!(!capabilities.terminal);
     }
 }

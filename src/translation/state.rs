@@ -120,6 +120,9 @@ pub struct GatewayState {
     pub turn_diffs: HashMap<String, Vec<ToolDiffSet>>,
     /// Streamed assistant and reasoning text per active turn.
     pub turn_outputs: HashMap<String, TurnOutput>,
+    /// Follow-up input queued while the current prompt cancellation completes.
+    /// Remove this when the planned Grok send-now prompt path lands end to end.
+    pub pending_steers: HashMap<String, Value>,
     /// Newest ACP prompt ID for each active Codex turn. A send-now steer
     /// replaces this so a cancelled predecessor cannot complete the turn.
     pub active_prompt_ids: HashMap<String, String>,
@@ -144,6 +147,7 @@ impl GatewayState {
             session_config: HashMap::new(),
             turn_diffs: HashMap::new(),
             turn_outputs: HashMap::new(),
+            pending_steers: HashMap::new(),
             active_prompt_ids: HashMap::new(),
             model_state: None,
             rollout: RolloutRecorder::default(),

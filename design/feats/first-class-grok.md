@@ -32,6 +32,8 @@ Launch the Codex desktop UI once, choose either a native Codex model or Grok
   user-facing `turn/steer`; it is reserved for follow-ups that should join the
   running prompt at Grok's next safe point.
 - Permission requests are decided in the Codex UI and returned to Grok.
+- Grok remains the sole terminal executor. ACP command results render through
+  Grok's tool updates; the bridge does not advertise terminal callbacks.
 - Grok remains the sole file-edit executor. Its ACP edit updates render as
   native Codex file-change items with concrete path, kind, and diff data.
 - Repeated ACP completion content does not duplicate a diff, and separate
@@ -57,5 +59,6 @@ Launch the Codex desktop UI once, choose either a native Codex model or Grok
 - Grok Build ACP endpoint: `grok 1.0.x`, ACP protocol version 1.
 - Grok 4.6 is advertised as `grok/grok-4.6` with text input and
   `low`, `medium`, `high`, and `xhigh` reasoning efforts.
-- ACP filesystem callbacks are not advertised in the MVP; Grok Build uses its
-  native tools and reports their effects through ACP session updates.
+- ACP filesystem and terminal callbacks are not advertised in the MVP; Grok
+  Build uses its native tools and reports their effects through ACP session
+  updates.

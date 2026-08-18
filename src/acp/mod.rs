@@ -1,7 +1,6 @@
 pub mod client_impl;
 pub mod fs_handler;
 pub mod spawn;
-pub mod terminal_handler;
 
 use std::path::Path;
 
