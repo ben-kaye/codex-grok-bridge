@@ -1,0 +1,45 @@
+#!/bin/sh
+set -eu
+
+bridge_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+app_bundle=${CODEX_GROK_APP:-/Applications/ChatGPT.app}
+app_executable="$app_bundle/Contents/MacOS/ChatGPT"
+native_codex=${CODEX_GROK_NATIVE_CODEX:-"$app_bundle/Contents/Resources/codex"}
+bridge_executable="$bridge_root/target/release/codex-grok-bridge"
+
+if [ ! -x "$app_executable" ]; then
+  echo "Codex desktop executable not found: $app_executable" >&2
+  exit 1
+fi
+
+if [ ! -x "$native_codex" ]; then
+  echo "Bundled Codex executable not found: $native_codex" >&2
+  exit 1
+fi
+
+if [ -n "${CODEX_GROK_GROK:-}" ]; then
+  grok_executable=$CODEX_GROK_GROK
+else
+  grok_executable=$(command -v grok 2>/dev/null || true)
+fi
+
+if [ -z "$grok_executable" ] || [ ! -x "$grok_executable" ]; then
+  echo "Grok Build was not found; set CODEX_GROK_GROK to its executable." >&2
+  exit 1
+fi
+
+if pgrep -x ChatGPT >/dev/null 2>&1; then
+  echo "Quit the running ChatGPT/Codex desktop app, then launch again." >&2
+  exit 1
+fi
+
+if [ ! -x "$bridge_executable" ]; then
+  cargo build --manifest-path "$bridge_root/Cargo.toml" --release --locked
+fi
+
+export CODEX_CLI_PATH="$bridge_executable"
+export CODEX_GROK_NATIVE_CODEX="$native_codex"
+export CODEX_GROK_GROK="$grok_executable"
+export CODEX_APP_SERVER_FORCE_CLI=1
+
+exec "$app_executable" "$@"

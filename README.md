@@ -41,7 +41,6 @@ CLI `0.148.x` and Grok Build `1.0.x`; unsupported versions fail at startup.
 
 ```sh
 cargo test --locked
-./bin/smoke-test
 ```
 
 Grok-only routing state is stored under `$CODEX_HOME/grok-bridge/`; Grok
