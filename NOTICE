@@ -1,0 +1,8 @@
+codex-grok-bridge
+
+The ACP translation engine is adapted from codex-acp-gateway at commit
+81db00d32207c3333cd05ab6463099ae21fc0d46, Copyright 2025 OpenAI,
+https://github.com/mmonad/codex-acp-gateway.
+
+This project includes vendored code from OpenAI Codex
+(https://github.com/openai/codex), licensed under the Apache License 2.0.

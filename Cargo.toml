@@ -1,0 +1,112 @@
+[workspace]
+members = [
+    "crates/app-server-protocol",
+    "crates/codex-experimental-api-macros",
+    "crates/execpolicy",
+    "crates/file-search",
+    "crates/protocol",
+    "crates/utils/absolute-path",
+    "crates/utils/cache",
+    "crates/utils/git",
+    "crates/utils/image",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace.lints]
+
+[workspace.dependencies]
+codex-execpolicy = { path = "crates/execpolicy" }
+codex-experimental-api-macros = { path = "crates/codex-experimental-api-macros" }
+codex-git = { path = "crates/utils/git" }
+codex-protocol = { path = "crates/protocol" }
+codex-utils-absolute-path = { path = "crates/utils/absolute-path" }
+codex-utils-cache = { path = "crates/utils/cache" }
+codex-utils-image = { path = "crates/utils/image" }
+
+anyhow = "1"
+assert_matches = "1.5"
+base64 = "0.22"
+clap = "4"
+crossbeam-channel = "0.5"
+dirs = "6"
+icu_decimal = "2.1"
+icu_locale_core = "2.1"
+icu_provider = { version = "2.1", features = ["sync"] }
+ignore = "0.4"
+image = { version = "0.25", default-features = false }
+inventory = "0.3"
+lru = "0.18"
+mime_guess = "2"
+multimap = "0.10"
+nucleo = { git = "https://github.com/helix-editor/nucleo.git", rev = "4253de9faabb4e5c6d81d946a5e35a90f87347ee" }
+once_cell = "1"
+path-absolutize = "3"
+pretty_assertions = "1"
+schemars = "0.8"
+serde = { version = "1", features = ["rc"] }
+serde_json = "1"
+serde_with = "3"
+sha1 = "0.10"
+shlex = "1"
+similar = "2"
+starlark = { version = "0.14", default-features = false }
+strum = "0.27"
+strum_macros = "0.28"
+sys-locale = "0.3"
+tempfile = "3"
+thiserror = "2"
+tokio = "1"
+tracing = "0.1"
+ts-rs = "11"
+uuid = "1"
+walkdir = "2"
+
+[package]
+name = "codex-grok-bridge"
+description = "Run native Codex and Grok Build together in the Codex desktop UI"
+version = "1.0.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[lib]
+name = "codex_acp_gateway"
+path = "src/lib.rs"
+
+[[bin]]
+name = "codex-grok-bridge"
+path = "src/main.rs"
+
+[dependencies]
+# Trimmed protocol sources from the Codex CLI line this desktop build speaks.
+codex-app-server-protocol = { path = "crates/app-server-protocol" }
+codex-file-search = { path = "crates/file-search" }
+codex-protocol = { workspace = true }
+
+agent-client-protocol = { version = "0.9", features = ["unstable"] }
+
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["serde", "v7"] }
+thiserror = "2"
+anyhow = "1"
+async-trait = "0.1"
+futures = "0.3"
+similar = "2"
+dirs = "6"
+tokio-tungstenite = "0.26"
+tokio-util = { version = "0.7", features = ["compat"] }
+time = { version = "0.3", features = ["formatting", "parsing", "macros"] }
+base64 = "0.22"
+
+[dev-dependencies]
+codex-utils-absolute-path = { workspace = true }
+pretty_assertions = "1"
+tempfile = "3"

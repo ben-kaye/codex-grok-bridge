@@ -1,8 +1,10 @@
 # Core invariants
 
 1. The Codex UI talks only to a Codex app-server-compatible JSON-RPC endpoint.
-2. Native Codex traffic is proxied to the bundled Codex app-server. The bridge
-   does not reimplement the Codex runtime.
+2. Native Codex task traffic, including `thread/start`, is proxied byte-for-byte
+   to and from the bundled Codex app-server. The bridge does not correlate,
+   translate, persist ownership for, or reimplement native tasks. Only shared
+   discovery responses are aggregated.
 3. The bridge talks to Grok Build only through its supported ACP endpoint.
 4. A task is pinned to one backend when it is created. A later model selection
    cannot silently move its history or execution to another backend.
@@ -18,3 +20,7 @@
    starts. Unsupported combinations fail explicitly.
 10. The signed desktop application is not modified. A launcher selects the
     bridge as the app-server executable and supplies the bundled Codex path.
+    Launcher-only environment overrides are removed from the native child.
+11. XAI-specific ACP extensions and request metadata are not portable ACP.
+    Any dependency on them is covered by the Grok Build version gate and a
+    focused protocol fixture.
